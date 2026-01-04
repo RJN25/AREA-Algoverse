@@ -74,7 +74,7 @@ def _prompt_hidden_logits(tokenizer, model, prompt):
     generation_output = model.generate(**inputs, max_new_tokens=256, do_sample=False, pad_token_id=tokenizer.eos_token_id)
     generated_text = tokenizer.decode(generation_output[0], skip_special_tokens=True)
 
-    outputs = model(**inputs)
+    outputs = model(**inputs, output_hidden_states=True)
     hidden = last_hidden_last_token(outputs, TARGET_LAYER)
     last_layer = outputs.hidden_states[-1][:, -1, :]
     option_ids = [tokenizer.convert_tokens_to_ids(x) for x in LETTER]
@@ -99,7 +99,9 @@ def evaluate_softmax_baseline(split: str = "test", csv_name: str = "baseline_sof
     history: List[dict] = []
     correct_so_far = 0
 
-    for idx, example in enumerate(tqdm(dataset, desc=f"Evaluating {split} softmax baseline"), start=1):
+    total = limit if limit is not None else len(dataset)
+
+    for idx, example in enumerate(tqdm(dataset, desc=f"Evaluating {split} softmax baseline", total=total), start=1):
         prompt = build_prompt(example["stem"], list(example["choices"]))
         _, logits4, generated_text = _prompt_hidden_logits(tokenizer, model, prompt)
 
@@ -221,7 +223,8 @@ def generate_only(split: str = "test", csv_name: str = "gen_only.csv", limit: Op
         writer = csv.DictWriter(fp, fieldnames=fieldnames)
         writer.writeheader()
 
-        for idx, example in enumerate(tqdm(dataset, desc=f"Generating {split}"), start=1):
+        total = limit if limit is not None else len(dataset)
+        for idx, example in enumerate(tqdm(dataset, desc=f"Generating {split}", total=total), start=1):
             prompt = build_prompt(example["stem"], list(example["choices"]))
             inputs = tokenizer(prompt, return_tensors="pt").to(DEVICE)
             generation_output = model.generate(
@@ -239,7 +242,8 @@ def generate_only(split: str = "test", csv_name: str = "gen_only.csv", limit: Op
     return csv_path
 
 
-def main() -> None:
+if __name__ == "__main__":
+    # simple runner for debugging
     metrics, path, plot = evaluate_softmax_baseline()
     print(f"Saved per-sample probabilities to {path}")
     if plot is not None:
@@ -249,7 +253,3 @@ def main() -> None:
             print(f"{key}: {value:.4f}")
         else:
             print(f"{key}: {value}")
-
-
-if __name__ == "__main__":
-    main()
