@@ -82,7 +82,7 @@ def _prompt_hidden_logits(tokenizer, model, prompt):
     return hidden, logits4, generated_text
 
 
-def evaluate_softmax_baseline(split: str = "validation", csv_name: str = "baseline_softmax.csv"):
+def evaluate_softmax_baseline(split: str = "test", csv_name: str = "baseline_softmax.csv", limit: Optional[int] = None):
     dataset = MedQADataset(split)
     tokenizer, model = load_model()
 
@@ -105,7 +105,7 @@ def evaluate_softmax_baseline(split: str = "validation", csv_name: str = "baseli
 
         # Use the model's raw logits with a softmax for probabilities.
         logits4 = logits4.to(dtype=torch.float32)
-        probs = torch.softmax(logits4, dim=-1).squeeze(0).cpu().numpy()
+        probs = torch.softmax(logits4, dim=-1).squeeze(0).detach().cpu().numpy()
 
         pred_idx = int(np.argmax(probs))
         label = example["label"]
@@ -156,6 +156,9 @@ def evaluate_softmax_baseline(split: str = "validation", csv_name: str = "baseli
             row[f"p_{letter}"] = float(probs[i])
         rows.append(row)
 
+        if limit is not None and idx >= limit:
+            break
+
     probs_arr = np.stack(probs_all, axis=0)
     labels_arr = np.array(labels)
     preds_arr = np.array(preds)
@@ -196,6 +199,44 @@ def evaluate_softmax_baseline(split: str = "validation", csv_name: str = "baseli
         logger.info(f"Saved metric trend plot to {plot_path}")
 
     return metrics, csv_path, plot_path
+
+
+def generate_only(split: str = "test", csv_name: str = "gen_only.csv", limit: Optional[int] = None):
+    """Run generation-only on the dataset and save generated outputs to CSV.
+
+    This intentionally performs no confidence scoring or hidden-state based processing.
+    """
+    dataset = MedQADataset(split)
+    tokenizer, model = load_model()
+
+    _ensure_log_dir()
+    csv_path = Path(LOG_DIR) / csv_name
+    logger = setup_logger("generate_only", f"generate_only_{split}.log")
+
+    logger.info(f"Loaded MedQA {split} dataset with {len(dataset)} samples.")
+    logger.info("Starting generation-only run...")
+
+    fieldnames = ["qid", "generated_output"]
+    with csv_path.open("w", newline="", encoding="utf-8") as fp:
+        writer = csv.DictWriter(fp, fieldnames=fieldnames)
+        writer.writeheader()
+
+        for idx, example in enumerate(tqdm(dataset, desc=f"Generating {split}"), start=1):
+            prompt = build_prompt(example["stem"], list(example["choices"]))
+            inputs = tokenizer(prompt, return_tensors="pt").to(DEVICE)
+            generation_output = model.generate(
+                **inputs, max_new_tokens=256, do_sample=False, pad_token_id=tokenizer.eos_token_id
+            )
+            generated_text = tokenizer.decode(generation_output[0], skip_special_tokens=True)
+
+            writer.writerow({"qid": example["qid"], "generated_output": generated_text})
+            fp.flush()
+
+            if limit is not None and idx >= limit:
+                break
+
+    logger.info(f"Saved generation-only CSV to {csv_path}")
+    return csv_path
 
 
 def main() -> None:
